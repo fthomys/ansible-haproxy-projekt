@@ -1,0 +1,66 @@
+---
+- name: Rolling maintenance
+  hosts: web
+  become: true
+  gather_facts: true
+  serial: 1
+
+  vars:
+    haproxy_master: "{{ groups['master'][0] }}"
+    haproxy_socket: /run/haproxy/admin.sock
+    haproxy_backend: web_back
+
+  pre_tasks:
+    - name: Install socat if not present
+      ansible.builtin.apt:
+        name: socat
+        state: present
+        update_cache: true
+      delegate_to: "{{ haproxy_master }}"
+      become: true
+
+  tasks:
+    - name: Drain node from haproxy
+      ansible.builtin.shell: |
+        echo 'disable server %s/%s\n' '{{ haproxy_backend }}' '{{ inventory_hostname }}' | socat stdio {{ haproxy_socket }}
+      delegate_to: "{{ haproxy_master }}"
+      changed_when: true
+
+    - name: Wait for active sessions to drain
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo 'show stat\n' | socat stdio {{ haproxy_socket }} | awk -F, '($1=="{{ haproxy_backend }}" && $2=="{{ inventory_hostname }}"){print $5}'
+      register: scur
+      delegate_to: "{{ haproxy_master }}"
+      retries: 60
+      delay: 2
+      until: scur.stdout is defined and scur.stdout | int == 0
+
+    - name: Update packages
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+
+    - name: Check if reboot required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+      when: reboot_required.stat.exists
+
+    - name: Wait for Apache to be up
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+
+    - name: Re-enable node in HAProxy
+      ansible.builtin.shell: |
+        echo 'enable server %s/%s\n' '{{ haproxy_backend }}' '{{ inventory_hostname }}' | socat stdio {{ haproxy_socket }}
+      delegate_to: "{{ haproxy_master }}"
+      changed_when: true

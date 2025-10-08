@@ -1,0 +1,44 @@
+---
+- name: Install php and apache
+  hosts: web
+  become: true
+  gather_facts: true
+
+  vars:
+    web_root: /var/www/html
+
+  tasks:
+    - name: Ensure apt cache is up to date
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Apache and PHP
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - php
+          - libapache2-mod-php
+        state: present
+
+    - name: Start apache if needed
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+
+    - name: Deploy php app
+      ansible.builtin.copy:
+        dest: "{{ web_root }}/index.php"
+        src: files/index.php
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create health check endpoint
+      ansible.builtin.copy:
+        dest: "{{ web_root }}/health.php"
+        src: files/health.php
+        owner: root
+        group: root
+        mode: '0644'

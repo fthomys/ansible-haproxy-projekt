@@ -1,0 +1,90 @@
+---
+- name: Install and configure HAProxy on master
+  hosts: master
+  become: true
+  gather_facts: true
+
+  vars:
+    haproxy_cfg_path: /etc/haproxy/haproxy.cfg
+    haproxy_socket: /run/haproxy/admin.sock
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install HAProxy and dependencies
+      ansible.builtin.apt:
+        name:
+          - haproxy
+          - socat
+        state: present
+
+    - name: Create HAProxy config directory
+      ansible.builtin.file:
+        path: /etc/haproxy
+        state: directory
+        mode: '0755'
+
+    - name: Install haproy config
+      ansible.builtin.template:
+        src: templates/haproxy.cfg.j2
+        dest: "{{ haproxy_cfg_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart haproxy
+
+    - name: Ensure haproxy enabled and started
+      ansible.builtin.service:
+        name: haproxy
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart haproxy
+      ansible.builtin.service:
+        name: haproxy
+        state: restarted
+
+- name: Configure firewall on web servers to allow haproxy only
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install ufw
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+
+    - name: Allow ssh
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Allow http from haproxy only
+      community.general.ufw:
+        rule: allow
+        proto: tcp
+        from_ip: "{{ item }}"
+        to_port: 80
+      loop: "{{ groups['master'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | list }}"
+
+    - name: Start the firewall
+      community.general.ufw:
+        state: enabled
+        direction: incoming
+        logging: 'on'
+        policy: deny
+
+    - name: Show UFW status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Print UFW status
+      ansible.builtin.debug:
+        var: ufw_status.stdout_lines
