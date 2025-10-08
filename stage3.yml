@@ -62,6 +62,6 @@
 
     - name: Re-enable node in HAProxy
       ansible.builtin.shell: |
-        echo 'enable server %s/%s\n' '{{ haproxy_backend }}' '{{ inventory_hostname }}' | socat stdio {{ haproxy_socket }}
+        printf 'enable server %s/%s\n' '{{ haproxy_backend }}' '{{ inventory_hostname }}' | socat stdio {{ haproxy_socket }}
       delegate_to: "{{ haproxy_master }}"
       changed_when: true
